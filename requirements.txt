@@ -1,0 +1,8 @@
+sconf
+librosa
+matplotlib
+numpy
+phonemizer
+scipy
+tensorboard
+Unidecode
