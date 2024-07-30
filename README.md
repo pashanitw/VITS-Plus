@@ -2,6 +2,8 @@
 
 This is the replication of VITS with minor modifications. [ArXiv Paper Link](https://arxiv.org/abs/2106.06103).
 
+Original implementation: [GitHub Repository](https://github.com/jaywalnut310/vits)
+
 ![Work in Progress](https://img.shields.io/badge/status-work%20in%20progress-orange)
 
 ## Models
