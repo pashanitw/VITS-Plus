@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 import csv
 from torch import Tensor
-from utils import cleaned_text_to_sequence,text_to_sequence
+from utils import cleaned_text_to_sequence, text_to_sequence, load_wav_to_torch, intersperse
+from mel import spectrogram_torch
 
 
 @dataclass
@@ -14,7 +15,6 @@ class DataConfig:
     training_files: str
     validation_files: str
     lang: str
-    max_wav_value: float
     sampling_rate: int
     filter_length: int
     hop_length: int
@@ -24,7 +24,9 @@ class DataConfig:
     mel_fmax: Optional[float]
     add_blank: bool
     n_speakers: int
+    spec_dir: str
     cleaned_text: bool = False
+    max_wav_value: float = 32768.0
     min_text_len: int = 1
     max_text_len: int = 190
 
@@ -61,6 +63,12 @@ class AudioTextDataset(Dataset):
         self.config = config
         self._filter()
 
+    def __getitem__(self, idx):
+        return self.get_audio_text_pairs(self.audio_text_pairs[idx])
+
+    def __len__(self):
+        return len(self.audio_text_pairs)
+
     def _filter(self):
         """
         Filters text and stores spectrogram lengths for bucketing.
@@ -95,12 +103,43 @@ class AudioTextDataset(Dataset):
         """
         Normalizes the text and converts it to a sequence of integers.
         """
-        text_norm = None
         if self.config.cleaned_text:
             text_norm = cleaned_text_to_sequence(text)
         else:
             text_norm = text_to_sequence(text, self.config.lang)
         if self.config.add_blank:
-            pass
+            text_norm = intersperse(text_norm, 0)
 
-        return torch.LongTensor(text_norm)
+        text_norm = torch.LongTensor(text_norm)
+
+        return text_norm
+
+    def get_audio(self, audio_path):
+        audio, sr = load_wav_to_torch(audio_path)
+        if sr != self.config.sampling_rate:
+            raise ValueError(
+                f"Sampling rate {sr} does not match {self.config.sampling_rate}"
+            )
+
+        audio_norm = audio / self.config.max_wav_value
+        audio_norm = audio_norm.unsqueeze(0)
+        spec_filename = os.path.join(
+            self.config.spec_dir,
+            os.path.splitext(os.path.basename(audio_path))[0] + ".spec.pt",
+        )
+
+        if os.path.exists(spec_filename):
+            spec = torch.load(spec_filename)
+        else:
+            spec = spectrogram_torch(
+                audio_norm,
+                self.config.filter_length,
+                self.config.hop_length,
+                self.config.win_length,
+                center=False
+            )
+            spec = torch.squeeze(spec, 0)
+            torch.save(spec, spec_filename)
+
+        return spec, audio_norm
+
