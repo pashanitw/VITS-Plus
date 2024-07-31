@@ -152,7 +152,7 @@ class AudioTextDataset(Dataset):
 
 
 def text_audio_collate(
-    batch: List[Tuple[Tensor, Tensor, Tensor]], return_ids: bool = False
+    batch: List[Tuple[Tensor, Tensor, Tensor]]
 ):
     """
     Zero-pads model inputs and targets and collates the batch.
