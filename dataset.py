@@ -13,6 +13,8 @@ from utils import (
     intersperse,
 )
 from mel import spectrogram_torch
+from typing import List, Tuple, Union, Dict
+import torch.nn.functional as F
 
 
 @dataclass
@@ -147,3 +149,47 @@ class AudioTextDataset(Dataset):
             torch.save(spec, spec_filename)
 
         return spec, audio_norm
+
+
+def text_audio_collate(
+    batch: List[Tuple[Tensor, Tensor, Tensor]], return_ids: bool = False
+):
+    """
+    Zero-pads model inputs and targets and collates the batch.
+
+    Args:
+        batch: List of tuples containing normalized text, spectrogram, and waveform.
+        return_ids: Whether to return the sorted indices.
+
+    Returns:
+        Tuple of padded text, text lengths, padded spectrograms, spectrogram lengths, padded waveforms, waveform lengths,
+        and optionally the sorted indices if return_ids is True.
+    """
+    # Get the max lengths for the padding
+    max_text_len = max(len(x[0]) for x in batch)
+    max_spec_len = max(x[1].size(1) for x in batch)
+    max_wav_len = max(len(x[2].size(1)) for x in batch)
+
+    # prepare tensors
+    text_lengths = torch.LongTensor([len(x[0]) for x in batch])
+    spec_lengths = torch.LongTensor([x[1].size(1) for x in batch])
+    wav_lengths = torch.LongTensor([x[2].size(1) for x in batch])
+
+    # pad sequences
+    text_padded = torch.stack(
+        [
+            F.pad(x[0], (0, (max_text_len - text_lengths[i])))
+            for i, x in enumerate(batch)
+        ]
+    )
+    spec_padded = torch.stack(
+        [
+            F.pad(x[1], (0, (max_spec_len - spec_lengths[i])))
+            for i, x in enumerate(batch)
+        ]
+    )
+    wav_padded = torch.stack(
+        [F.pad(x[2], (0, (max_wav_len - wav_lengths[i]))) for i, x in enumerate(batch)]
+    )
+
+    return text_padded, text_lengths, spec_padded, spec_lengths, wav_padded, wav_lengths

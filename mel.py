@@ -1,6 +1,6 @@
 import torch
 from torch import Tensor
-from typing import Dict
+from typing import List, Tuple, Union, Dict
 
 mel_basis = {}
 hann_window: Dict[str, Tensor] = {}
