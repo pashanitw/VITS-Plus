@@ -47,7 +47,8 @@ def load_wav_to_torch(full_path):
     sampling_rate, data = read(full_path)
     return torch.FloatTensor(data.astype(np.float32)), sampling_rate
 
+
 def intersperse(lst, item):
-  result = [item] * (len(lst) * 2 + 1)
-  result[1::2] = lst
-  return result
+    result = [item] * (len(lst) * 2 + 1)
+    result[1::2] = lst
+    return result

@@ -1,10 +1,14 @@
 import torch
+from torch import Tensor
+from typing import Dict
 
 mel_basis = {}
-hann_window = {}
+hann_window: Dict[str, Tensor] = {}
 
 
-def spectrogram_torch(y, n_fft, hop_size, win_size, center=False):
+def spectrogram_torch(
+    y: Tensor, n_fft: int, hop_size: int, win_size: int, center: bool = False
+):
     """
     Compute the spectrogram of an audio signal using PyTorch.
 

@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 import csv
 from torch import Tensor
-from utils import cleaned_text_to_sequence, text_to_sequence, load_wav_to_torch, intersperse
+from utils import (
+    cleaned_text_to_sequence,
+    text_to_sequence,
+    load_wav_to_torch,
+    intersperse,
+)
 from mel import spectrogram_torch
 
 
@@ -136,10 +141,9 @@ class AudioTextDataset(Dataset):
                 self.config.filter_length,
                 self.config.hop_length,
                 self.config.win_length,
-                center=False
+                center=False,
             )
             spec = torch.squeeze(spec, 0)
             torch.save(spec, spec_filename)
 
         return spec, audio_norm
-
