@@ -60,6 +60,7 @@ def spectrogram_torch(
         pad_mode="reflect",
         normalized=False,
         onesided=True,
+        return_complex=False
     )
 
     # Convert the complex-valued spectrogram to a magnitude spectrogram

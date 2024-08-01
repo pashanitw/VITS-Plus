@@ -66,7 +66,8 @@ class AudioTextDataset(Dataset):
     def __init__(self, data_path: str, config: DataConfig):
 
         random.seed(1234)
-        self.audio_text_pairs = random.shuffle(get_data_path_list(data_path))
+        self.audio_text_pairs = get_data_path_list(data_path)
+        random.shuffle(self.audio_text_pairs)
         self.config = config
         self._filter()
 
@@ -96,6 +97,8 @@ class AudioTextDataset(Dataset):
         self.audio_text_pairs = new_audio_text_pairs
         self.spec_lengths = spec_lengths
 
+        assert len(self.audio_text_pairs) == len(self.spec_lengths), "spectrogram lengths do not match the lengths of audio text pairs"
+
     def get_audio_text_pairs(self, audiopath_and_text: Tuple[str, str]):
         """
         Separates the filename and text, retrieves the corresponding audio and spectrogram.
@@ -111,7 +114,7 @@ class AudioTextDataset(Dataset):
         Normalizes the text and converts it to a sequence of integers.
         """
         if self.config.cleaned_text:
-            text_norm = cleaned_text_to_sequence(text)
+            text_norm = cleaned_text_to_sequence(text, self.config.lang)
         else:
             text_norm = text_to_sequence(text, self.config.lang)
         if self.config.add_blank:
@@ -135,6 +138,8 @@ class AudioTextDataset(Dataset):
             os.path.splitext(os.path.basename(audio_path))[0] + ".spec.pt",
         )
 
+        os.makedirs(self.config.spec_dir, exist_ok=True)
+
         if os.path.exists(spec_filename):
             spec = torch.load(spec_filename)
         else:
@@ -151,7 +156,7 @@ class AudioTextDataset(Dataset):
         return spec, audio_norm
 
 
-def text_audio_collate(
+def text_audio_collate_fn(
     batch: List[Tuple[Tensor, Tensor, Tensor]]
 ):
     """
@@ -168,7 +173,7 @@ def text_audio_collate(
     # Get the max lengths for the padding
     max_text_len = max(len(x[0]) for x in batch)
     max_spec_len = max(x[1].size(1) for x in batch)
-    max_wav_len = max(len(x[2].size(1)) for x in batch)
+    max_wav_len = max(x[2].size(1) for x in batch)
 
     # prepare tensors
     text_lengths = torch.LongTensor([len(x[0]) for x in batch])
