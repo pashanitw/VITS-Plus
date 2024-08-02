@@ -3,7 +3,7 @@ from torch import nn, Tensor
 from dataclasses import dataclass
 from typing import Optional
 import torch.nn.functional as F
-from rope import RotaryPositionalEmbeddings
+from .rope import RotaryPositionalEmbeddings
 
 # Define the necessary arguments for developing LLaMA-3 from scratch
 
@@ -13,7 +13,6 @@ class LLM_Args:
     num_layers: int  # Number of transformer layers in the model
     num_heads: int  # Number of attention heads in each transformer layer
     embed_dim: int  # Dimensionality of the embeddings and transformer hidden states
-    intermediate_dim: int  # Dimensionality of the intermediate layer in the feed-forward network
     vocab_size: int  # Size of the vocabulary (number of unique tokens)
     max_seq_len: int  # Maximum sequence length that the model can handle
     attn_dropout: float  # Dropout rate for attention layers
@@ -21,6 +20,8 @@ class LLM_Args:
     rope_base: int  # Base value for Rotary Position Embedding (RoPE)
     num_kv_heads: Optional[int] = None  # Number of key-value attention heads (optional)
     attention_bias = False  # Boolean flag to indicate whether to use attention bias
+    intermediate_dim: Optional[int] = None  # Dimensionality of the intermediate layer in the feed-forward network
+
 
 
 # Next Define the Attention Block
@@ -33,7 +34,7 @@ class SelfAttention(nn.Module):
         super().__init__()
 
         # Validate that the number of attention heads is divisible by the number of key-value heads
-        if args.num_heads % args.num_kv_heads != 0:
+        if args.num_kv_heads and args.num_heads % args.num_kv_heads != 0:
             raise ValueError(
                 f"Number of attention heads ({args.num_heads}) must be divisible by the number of key-value attention heads ({args.num_kv_heads})"
             )
@@ -141,8 +142,7 @@ class SelfAttention(nn.Module):
             k,
             v,
             attn_mask=mask,
-            dropout_p=self.attn_dropout,
-            is_causal=self.kv_cache is None,
+            dropout_p=self.attn_dropout
         )  # output shape: (batch_size, num_heads, seq_len, head_dim)
 
         # Reshape the output back to the original shape
@@ -401,6 +401,8 @@ class TransformerEncoder(nn.Module):
                 h
             ).float()  # The shape remains [batch_size, seq_length, embedding_dim]
 
+        return h
+
 
 # we are norm norm many places which is a RMS norm let's implement it
 
@@ -430,7 +432,8 @@ class RMS_Norm(nn.Module):
         """
         input_dtype = x.dtype  # Save the original data type of the input tensor
 
-        x = x.to(torch.float32)  # Convert input to float32 for stable computation
+        if x.dtype != torch.float32:
+            x = x.to(torch.float32)  # Convert input to float32 for stable computation
 
         # Compute the reciprocal of the root mean square of the input
         rms_a = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)

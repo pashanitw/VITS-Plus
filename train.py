@@ -7,11 +7,11 @@ from model.model import Generator, MultiPeriodDiscriminator
 from accelerate import Accelerator
 from transformers import get_cosine_schedule_with_warmup
 
-from utils import setup_logger
+from utils import setup_logger, get_vocab_len
 logger = setup_logger('model_training', 'train.log')
 
 
-torch.backends.cuda.enable_flash_sdp()
+torch.backends.cuda.enable_flash_sdp(True)
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = False
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -31,8 +31,13 @@ accelerator = Accelerator()
 train_Dataset = AudioTextDataset(config.data.training_files, data_config)
 
 
-def train_and_evaluate():
-    pass
+def train_and_evaluate(loaders, nets):
+    train_loader, _ = loaders
+    net_g, net_d = nets
+    for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths) in enumerate(train_loader):
+        net_g(x, x_lengths)
+
+
 
 if accelerator.is_main_process:
     logger.info(config)
@@ -55,13 +60,11 @@ train_loader = DataLoader(
 
 
 net_g = Generator(
-    config.data.filter_length // 2 + 1,
-    config.train.segment_size // config.data.hop_length,
-    n_speakers=config.data.n_speakers,
-    **config.model,
+    get_vocab_len(config.data.lang),
+    config.model
 )
 
-net_d = MultiPeriodDiscriminator(config.model.use_spectral_norm)
+net_d = MultiPeriodDiscriminator()
 for name, param in net_g.named_parameters():
     if not param.requires_grad:
         print(name, "not requires_grad")
@@ -145,9 +148,13 @@ rank = accelerator.process_index
 for epoch in range(epoch_str, config.train.epochs + 1):
     if accelerator.is_main_process:
         train_and_evaluate(
+            [train_loader, None],
+            [net_g, None]
         )
     else:
         train_and_evaluate(
+            [train_loader, None],
+            [net_g, net_d]
         )
 
 # wandb.finish()

@@ -5,6 +5,7 @@ import numpy as np
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
+from lang_cleaner.eng import get_english_symbols
 
 def cleaned_text_to_sequence(cleaned_text: str, lang: str):
     """Converts a string of text to a sequence of IDs corresponding to the symbols in the text.
@@ -59,16 +60,23 @@ def intersperse(lst, item):
 def create_attn_mask(x_lengths: torch.Tensor):
     max_len = x_lengths.max().item()
     batch_size = x_lengths.size(0)
-    mask = torch.arange(max_len).expand(batch_size, max_len).to(x_lengths.device)
-    mask = mask < x_lengths.unsqueeze(1)  # [B, max_len]
 
-    mask = mask.unsqueeze(1) & mask.unsqueeze(2)
+    # Create a mask of shape [B, max_len]
+    mask = torch.arange(max_len, device=x_lengths.device).expand(batch_size, max_len)
+    mask = mask < x_lengths.unsqueeze(1)
 
-    # convert boolean mask to float mask where 0.0 means masked
+    # Convert to float
+    mask = mask.float()
 
-    mask = mask.float().masked_fill(mask == 0, float("-inf"))
+    # Transform the mask
+    # Use torch.finfo(mask.dtype).min instead of float("-inf") for better numerical stability
+    transformed_mask = (1.0 - mask) * torch.finfo(mask.dtype).min
 
-    return mask
+    # The mask should be broadcastable to [B, 1, max_len, max_len]
+    # for compatibility with scaled_dot_product_attention
+    transformed_mask = transformed_mask.unsqueeze(1).unsqueeze(1)
+
+    return transformed_mask
 
 
 def setup_logger(name, log_file, level=logging.INFO):
@@ -94,3 +102,10 @@ def setup_logger(name, log_file, level=logging.INFO):
     logger.addHandler(f_handler)
 
     return logger
+
+def get_vocab_len(lang: str):
+    if lang == "en":
+        symbols, _, _ = get_english_symbols()
+        return len(symbols)
+    else:
+        raise ValueError(f"Language {lang} is not supported.")

@@ -1,10 +1,9 @@
 from dataclasses import dataclass
 from typing import List
-from spacy.symbols import nn
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 import math
-from llama import llama_encoder, LLM_Args
+from .llama import llama_encoder, LLM_Args
 from utils import create_attn_mask
 @dataclass
 class ModelConfig:
@@ -50,7 +49,6 @@ class TextEncoder(nn.Module):
 
         self.output_proj = nn.Linear(args.hidden_channels, args.hidden_channels * 2, bias=False)
     def forward(self, x: Tensor, x_lengths: Tensor):
-        x = self.emb(x) * math.sqrt(self.args.hidden_channels)
         attn_mask = create_attn_mask(x_lengths)
         x = self.encoder(x, attn_mask)
         stats = self.output_proj(x)
@@ -67,4 +65,9 @@ class Generator(nn.Module):
 
 
 class MultiPeriodDiscriminator(nn.Module):
-    pass
+    def __init__(self):
+        super().__init__()
+        self.test = nn.Linear(64, 64)
+
+    def forward(self, x: Tensor, x_lengths: Tensor):
+        return x
