@@ -2,7 +2,9 @@ from scipy.io.wavfile import read
 import torch
 from lang_cleaner.eng import english_cleaners, get_english_symbols
 import numpy as np
-
+import logging
+import sys
+from logging.handlers import RotatingFileHandler
 
 def cleaned_text_to_sequence(cleaned_text: str, lang: str):
     """Converts a string of text to a sequence of IDs corresponding to the symbols in the text.
@@ -52,3 +54,43 @@ def intersperse(lst, item):
     result = [item] * (len(lst) * 2 + 1)
     result[1::2] = lst
     return result
+
+
+def create_attn_mask(x_lengths: torch.Tensor):
+    max_len = x_lengths.max().item()
+    batch_size = x_lengths.size(0)
+    mask = torch.arange(max_len).expand(batch_size, max_len).to(x_lengths.device)
+    mask = mask < x_lengths.unsqueeze(1)  # [B, max_len]
+
+    mask = mask.unsqueeze(1) & mask.unsqueeze(2)
+
+    # convert boolean mask to float mask where 0.0 means masked
+
+    mask = mask.float().masked_fill(mask == 0, float("-inf"))
+
+    return mask
+
+
+def setup_logger(name, log_file, level=logging.INFO):
+    """Function to set up a logger that logs to both file and console"""
+
+    # Create a custom logger
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+
+    # Create handlers
+    c_handler = logging.StreamHandler(sys.stdout)
+    f_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
+    c_handler.setLevel(level)
+    f_handler.setLevel(level)
+
+    # Create formatters and add it to handlers
+    log_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    c_handler.setFormatter(log_format)
+    f_handler.setFormatter(log_format)
+
+    # Add handlers to the logger
+    logger.addHandler(c_handler)
+    logger.addHandler(f_handler)
+
+    return logger

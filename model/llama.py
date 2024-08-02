@@ -13,9 +13,7 @@ class LLM_Args:
     num_layers: int  # Number of transformer layers in the model
     num_heads: int  # Number of attention heads in each transformer layer
     embed_dim: int  # Dimensionality of the embeddings and transformer hidden states
-    intermediate_dim: (
-        int  # Dimensionality of the intermediate layer in the feed-forward network
-    )
+    intermediate_dim: int  # Dimensionality of the intermediate layer in the feed-forward network
     vocab_size: int  # Size of the vocabulary (number of unique tokens)
     max_seq_len: int  # Maximum sequence length that the model can handle
     attn_dropout: float  # Dropout rate for attention layers
@@ -25,50 +23,12 @@ class LLM_Args:
     attention_bias = False  # Boolean flag to indicate whether to use attention bias
 
 
-# kv cache is useful for lowering the memory requirement while doing the inference
-class KVCache(nn.Module):
-    def __init__(self, max_batch_size: int, dtype, args: LLM_Args):
-        super().__init__()
-        num_heads = (
-            args.num_heads
-        )  # we are using num heads because we are saving expanded version of k, v
-        head_dim = args.embed_dim // args.num_heads
-        # Shape of the cache: (batch_size, num_heads, max_seq_len, head_dim)
-        cache_shape = (max_batch_size, num_heads, args.max_seq_len, head_dim)
-
-        # Initialize key and value caches with zeros
-        self.register_buffer("k_cache", torch.zeros(cache_shape, dtype=dtype))
-        self.register_buffer("v_cache", torch.zeros(cache_shape, dtype=dtype))
-
-    def update(self, input_pos: Tensor, k_val: Tensor, v_val: Tensor):
-        num_positions = input_pos.shape[0]
-        bsz, _, seq_len, _ = (
-            k_val.shape
-        )  # k_val shape: (batch_size, num_heads, seq_len, head_dim)
-
-        assert (
-            num_positions == seq_len
-        )  # Ensure input positions match the sequence length
-
-        k_out = self.k_cache  # Retrieve the key cache
-        v_out = self.v_cache  # Retrieve the value cache
-
-        # Update the caches with the new key and value tensors at the specified positions
-        k_out[:, :, input_pos, :] = k_val
-        v_out[:, :, input_pos, :] = v_val
-
-        return k_out, v_out  # Return the updated caches
-
-
 # Next Define the Attention Block
-
-
-class CasualSelfAttention(nn.Module):
+class SelfAttention(nn.Module):
     def __init__(
         self,
         args: LLM_Args,
         pos_embeddings: nn.Module,
-        kv_cache: Optional[KVCache] = None,
     ):
         super().__init__()
 
@@ -113,8 +73,6 @@ class CasualSelfAttention(nn.Module):
 
         # Positional embeddings module
         self.pos_embeddings = pos_embeddings
-        # Key-value cache
-        self.kv_cache = kv_cache
 
     def forward(self, x: Tensor, mask: Optional[Tensor], input_pos: Optional[Tensor]):
         bsz, seq_len, _ = x.shape  # x shape: (batch_size, seq_len, embed_dim)
@@ -177,10 +135,6 @@ class CasualSelfAttention(nn.Module):
         k = k.transpose(1, 2)  # k shape: (batch_size, num_heads, seq_len, head_dim)
         v = v.transpose(1, 2)  # v shape: (batch_size, num_heads, seq_len, head_dim)
 
-        if self.kv_cache:
-            # Update the KV cache
-            k, v = self.kv_cache.update(input_pos, k, v)
-
         # Compute attention scores
         output = F.scaled_dot_product_attention(
             q,
@@ -234,7 +188,7 @@ class CasualSelfAttention(nn.Module):
 # └──────────────────────────────┘
 
 
-class TransformerDecoderLayer(nn.Module):
+class TransformerLayer(nn.Module):
     def __init__(self, attn, mlp, attn_norm, mlp_norm):
         super().__init__()
 
@@ -406,13 +360,13 @@ def _get_clones(module: nn.Module, N: int) -> nn.ModuleList:
     return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 
-class TransformerDecoder(nn.Module):
+class TransformerEncoder(nn.Module):
     def __init__(
         self,
         tok_embeddings: nn.Embedding,
         layer: nn.Module,
         norm: nn.Module,
-        output: nn.Linear,
+        output: nn.Linear | None,
         args: LLM_Args,
     ):
         super().__init__()
@@ -423,55 +377,29 @@ class TransformerDecoder(nn.Module):
             layer, args.num_layers
         )  # Clone the transformer layer multiple times
         self.max_seq_len = args.max_seq_len
-        # Pre-compute a causal mask to avoid future computation in each forward pass
-        self.casual_mask = torch.tril(
-            torch.ones((args.max_seq_len, args.max_seq_len), dtype=torch.bool)
-        )
 
         self.args = args
 
-    def setup_caches(self, max_batch_size: int, dtype: torch.dtype):
-        """
-        Initialize the cache for key-value pairs in the attention mechanism and set up the causal mask.
-
-        Args:
-            max_batch_size (int): Maximum batch size expected, which determines the cache size.
-            dtype (torch.dtype): Data type of the tensors to be used for the cache.
-        """
-        # Set up caches for all layers in the transformer. This cache is used to store key and value
-        # pairs across multiple forward passes, which is particularly useful in incremental decoding.
-        for layer in self.layers:
-            layer.attn.kv_cache = KVCache(max_batch_size, dtype, self.args)
-
-        # Initialize the causal mask that is used to prevent attention to future tokens.
-        # This mask is lower triangular, indicating that a position can only attend to previous positions.
-        self.casual_mask = torch.tril(
-            torch.ones(self.args.max_seq_len, self.args.max_seq_len, dtype=torch.bool)
-        )
-
-    def forward(self, tokens: Tensor, input_pos: Optional[Tensor] = None) -> Tensor:
+    def forward(self, tokens: Tensor, mask: Optional[Tensor] = None) -> Tensor:
         # Get batch size and sequence length from tokens tensor
         bsz, seq_len = tokens.shape
 
         h = self.tok_embeddings(tokens)  #  [batch_size, seq_length, embedding_dim])
 
-        if input_pos is not None:
-            # Create a mask for causal attention based on input positions (Shape: [1, 1, seq_length, seq_length])
-            mask = self.casual_mask[None, None, input_pos]
-        else:
-            mask = None
+
 
         # Apply transformer layers with attention masking
         for layer in self.layers:
-            h = layer(h, mask, input_pos)  #  [batch_size, seq_length, embedding_dim]
+            h = layer(h, mask)  #  [batch_size, seq_length, embedding_dim]
 
         # Apply normalization
         h = self.norm(h)  #  [batch_size, seq_length, embedding_dim]
 
-        # convert the final output to float 32
-        return self.output(
-            h
-        ).float()  # The shape remains [batch_size, seq_length, embedding_dim]
+        if self.output is not None:
+            # convert the final output to float 32
+            return self.output(
+                h
+            ).float()  # The shape remains [batch_size, seq_length, embedding_dim]
 
 
 # we are norm norm many places which is a RMS norm let's implement it
@@ -517,7 +445,7 @@ class RMS_Norm(nn.Module):
 
 
 # okay we finished implementing all the blocks required for llama implementation from scratch except rope which i am directly copying from original llama implementation
-def llama3(args: LLM_Args) -> TransformerDecoder:
+def llama_encoder(args: LLM_Args) -> TransformerEncoder:
     """
     Constructs a TransformerDecoder model based on provided arguments.
 
@@ -536,7 +464,7 @@ def llama3(args: LLM_Args) -> TransformerDecoder:
     )
 
     # Define the self-attention mechanism with causal masking and rotary positional embeddings
-    self_attn = CasualSelfAttention(args, rope)
+    self_attn = SelfAttention(args, rope)
 
     # Compute the dimension of the intermediate layer of the MLP, use provided or calculate based on embedding dimension
     hidden_dim = (
@@ -549,7 +477,7 @@ def llama3(args: LLM_Args) -> TransformerDecoder:
     mlp = llama_mlp(dim=args.embed_dim, hidden_dim=hidden_dim)
 
     # Create a transformer decoder layer with attention, mlp and normalization
-    layer = TransformerDecoderLayer(
+    layer = TransformerLayer(
         attn=self_attn,
         mlp=mlp,
         attn_norm=RMS_Norm(
@@ -564,16 +492,18 @@ def llama3(args: LLM_Args) -> TransformerDecoder:
     tok_embeddings = nn.Embedding(args.vocab_size, args.embed_dim)
 
     # Output projection layer from embedding dimension to vocabulary size
-    output_proj = nn.Linear(args.embed_dim, args.vocab_size, bias=False)
+    # output_proj = nn.Linear(args.embed_dim, args.vocab_size, bias=False)
+
+    # output_proj = nn.Linear(args.embed_dim, args.embed_dim * 2, bias=False)
 
     # Assemble the complete Transformer Decoder model
-    model = TransformerDecoder(
+    model = TransformerEncoder(
         tok_embeddings=tok_embeddings,
         layer=layer,
         norm=RMS_Norm(
             dim=args.embed_dim, eps=args.norm_eps
         ),  # Apply normalization across the model output
-        output=output_proj,
+        output=None,
         args=args,
     )
 

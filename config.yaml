@@ -28,15 +28,15 @@ data:
   n_mel_channels: 80
   mel_fmin: 0.0
   mel_fmax: null
-  add_blank: true
+  add_blank: false
   n_speakers: 0
   cleaned_text: true
 
 model:
   inter_channels: 192
-  hidden_channels: 192
+  hidden_channels: 256
   filter_channels: 768
-  n_heads: 2
+  n_heads: 4
   n_layers: 6
   kernel_size: 3
   p_dropout: 0.1
@@ -48,3 +48,5 @@ model:
   upsample_kernel_sizes: [16, 16, 4, 4]
   n_layers_q: 3
   use_spectral_norm: false
+  seed: 12345
+  num_workers: 8

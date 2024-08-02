@@ -97,7 +97,9 @@ class AudioTextDataset(Dataset):
         self.audio_text_pairs = new_audio_text_pairs
         self.spec_lengths = spec_lengths
 
-        assert len(self.audio_text_pairs) == len(self.spec_lengths), "spectrogram lengths do not match the lengths of audio text pairs"
+        assert len(self.audio_text_pairs) == len(
+            self.spec_lengths
+        ), "spectrogram lengths do not match the lengths of audio text pairs"
 
     def get_audio_text_pairs(self, audiopath_and_text: Tuple[str, str]):
         """
@@ -156,9 +158,7 @@ class AudioTextDataset(Dataset):
         return spec, audio_norm
 
 
-def text_audio_collate_fn(
-    batch: List[Tuple[Tensor, Tensor, Tensor]]
-):
+def text_audio_collate_fn(batch: List[Tuple[Tensor, Tensor, Tensor]]):
     """
     Zero-pads model inputs and targets and collates the batch.
 
