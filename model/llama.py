@@ -142,7 +142,8 @@ class SelfAttention(nn.Module):
             k,
             v,
             attn_mask=mask,
-            dropout_p=self.attn_dropout
+            dropout_p=self.attn_dropout,
+            is_causal=False
         )  # output shape: (batch_size, num_heads, seq_len, head_dim)
 
         # Reshape the output back to the original shape
