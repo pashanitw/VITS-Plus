@@ -8,7 +8,8 @@ from accelerate import Accelerator
 from transformers import get_cosine_schedule_with_warmup
 
 from utils import setup_logger, get_vocab_len
-logger = setup_logger('model_training', 'train.log')
+
+logger = setup_logger("model_training", "train.log")
 
 
 torch.backends.cuda.enable_flash_sdp(True)
@@ -34,9 +35,10 @@ train_Dataset = AudioTextDataset(config.data.training_files, data_config)
 def train_and_evaluate(loaders, nets):
     train_loader, _ = loaders
     net_g, net_d = nets
-    for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths) in enumerate(train_loader):
-        net_g(x, x_lengths)
-
+    for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths) in enumerate(
+        train_loader
+    ):
+        net_g(x, x_lengths, y, y_lengths)
 
 
 if accelerator.is_main_process:
@@ -55,21 +57,16 @@ train_loader = DataLoader(
     pin_memory=True,
     persistent_workers=True,
     prefetch_factor=16,
-    num_workers=config.train.num_workers
+    num_workers=config.train.num_workers,
 )
 
 
-net_g = Generator(
-    get_vocab_len(config.data.lang),
-    config.model
-)
+net_g = Generator(get_vocab_len(config.data.lang), config.model)
 
 net_d = MultiPeriodDiscriminator()
 for name, param in net_g.named_parameters():
     if not param.requires_grad:
         print(name, "not requires_grad")
-
-
 
 
 optim_g = torch.optim.AdamW(
@@ -86,7 +83,6 @@ optim_d = torch.optim.AdamW(
 )
 
 
-
 world_size = accelerator.num_processes
 num_epochs = config.train.epochs
 one_epoch_steps = len(train_loader) // world_size
@@ -98,26 +94,26 @@ warmup_steps = int(0.1 * total_steps)
 print("====> warmup steps: {}".format(warmup_steps))
 
 
-scheduler_g = get_cosine_schedule_with_warmup(optim_g, num_warmup_steps=5000, num_training_steps=total_steps)
-
-
-scheduler_d =  get_cosine_schedule_with_warmup(optim_d, num_warmup_steps=5000, num_training_steps=total_steps)
-
-net_g, net_d, train_loader, optim_g, optim_d, scheduler_g, scheduler_d = accelerator.prepare(
-    net_g,
-    net_d,
-    train_loader,
-    optim_g,
-    optim_d,
-    scheduler_g,
-    scheduler_d
+scheduler_g = get_cosine_schedule_with_warmup(
+    optim_g, num_warmup_steps=5000, num_training_steps=total_steps
 )
 
-if config.train.ckpt_path !="":
+
+scheduler_d = get_cosine_schedule_with_warmup(
+    optim_d, num_warmup_steps=5000, num_training_steps=total_steps
+)
+
+net_g, net_d, train_loader, optim_g, optim_d, scheduler_g, scheduler_d = (
+    accelerator.prepare(
+        net_g, net_d, train_loader, optim_g, optim_d, scheduler_g, scheduler_d
+    )
+)
+
+if config.train.ckpt_path != "":
 
     accelerator.load_state(config.train.ckpt_path)
 
-    global_step = int(os.path.basename(config.train.ckpt_path).split('_')[-1])
+    global_step = int(os.path.basename(config.train.ckpt_path).split("_")[-1])
 
     epoch_str = global_step // len(train_loader)
 
@@ -147,15 +143,8 @@ print("=== current global step is ===", global_step)
 rank = accelerator.process_index
 for epoch in range(epoch_str, config.train.epochs + 1):
     if accelerator.is_main_process:
-        train_and_evaluate(
-            [train_loader, None],
-            [net_g, None]
-        )
+        train_and_evaluate([train_loader, None], [net_g, None])
     else:
-        train_and_evaluate(
-            [train_loader, None],
-            [net_g, net_d]
-        )
+        train_and_evaluate([train_loader, None], [net_g, net_d])
 
 # wandb.finish()
-

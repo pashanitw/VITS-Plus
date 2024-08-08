@@ -7,6 +7,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from lang_cleaner.eng import get_english_symbols
 
+
 def cleaned_text_to_sequence(cleaned_text: str, lang: str):
     """Converts a string of text to a sequence of IDs corresponding to the symbols in the text.
     Args:
@@ -57,8 +58,17 @@ def intersperse(lst, item):
     return result
 
 
+def sequence_mask(x_lengths: torch.Tensor):
+
+    max_len = x_lengths.max()
+
+    mask = torch.arange(max_len, dtype=x_lengths.dtype, device=x_lengths.device)
+
+    return mask[None, :] < x_lengths[:, None]
+
+
 def create_attn_mask(x_lengths: torch.Tensor):
-    max_len = x_lengths.max().item()
+    max_len = x_lengths.max()
     batch_size = x_lengths.size(0)
 
     # Create a mask of shape [B, max_len]
@@ -93,7 +103,9 @@ def setup_logger(name, log_file, level=logging.INFO):
     f_handler.setLevel(level)
 
     # Create formatters and add it to handlers
-    log_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    log_format = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     c_handler.setFormatter(log_format)
     f_handler.setFormatter(log_format)
 
@@ -102,6 +114,7 @@ def setup_logger(name, log_file, level=logging.INFO):
     logger.addHandler(f_handler)
 
     return logger
+
 
 def get_vocab_len(lang: str):
     if lang == "en":

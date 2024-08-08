@@ -60,7 +60,7 @@ class Generator(nn.Module):
         super().__init__()
         self.text_encoder = TextEncoder(n_vocab, args)
 
-    def forward(self, x: Tensor, x_lengths: Tensor):
+    def forward(self, x: Tensor, x_lengths: Tensor, y: Tensor, y_lengths: Tensor):
         x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths)
 
 
