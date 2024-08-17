@@ -38,7 +38,7 @@ def train_and_evaluate(loaders, nets):
     for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths) in enumerate(
         train_loader
     ):
-        net_g(x, x_lengths, y, y_lengths)
+        net_g(x, x_lengths, spec, spec_lengths)
 
 
 if accelerator.is_main_process:
@@ -61,7 +61,12 @@ train_loader = DataLoader(
 )
 
 
-net_g = Generator(get_vocab_len(config.data.lang), config.model)
+net_g = Generator(
+    get_vocab_len(config.data.lang),
+    config.data.filter_length // 2 + 1,
+    config.train.segment_size // config.data.hop_length,
+    config.model,
+)
 
 net_d = MultiPeriodDiscriminator()
 for name, param in net_g.named_parameters():

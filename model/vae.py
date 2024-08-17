@@ -1,11 +1,10 @@
 import torch
 from torch import nn, Tensor
-from model import ModelConfig
 from utils import sequence_mask
 from einops import rearrange
 from typing import Tuple
 from torch.nn import Conv1d
-from utils import weight_norm
+from torch.nn.utils import weight_norm
 
 
 @torch.jit.script
@@ -102,9 +101,9 @@ class PosteriorEncoder(nn.Module):
             in_channels: int,
             out_channels: int,
             hidden_channels: int,
-            kernel_size: int,
-            dilation_rate: int,
             n_layers: int,
+            kernel_size: int = 5,
+            dilation_rate: int = 1,
             gin_channels: int = 0,
     ):
 
@@ -158,3 +157,8 @@ class PosteriorEncoder(nn.Module):
 
 
 
+class Decoder(nn.Module):
+    def __init__(
+            self,
+    ):
+        pass

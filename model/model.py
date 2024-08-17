@@ -5,6 +5,8 @@ from torch import Tensor, nn
 import math
 from .llama import llama_encoder, LLM_Args
 from utils import create_attn_mask
+from .vae import PosteriorEncoder
+
 @dataclass
 class ModelConfig:
     inter_channels: int
@@ -55,13 +57,29 @@ class TextEncoder(nn.Module):
         m, logs = stats.chunk(2, dim=-1)
 
         return x, m, logs, attn_mask
+
+
+
 class Generator(nn.Module):
-    def __init__(self, n_vocab:int, args: ModelConfig, **kwargs):
+    def __init__(self,
+                 n_vocab:int,
+                 spec_channels: int,
+                 segment_size: int,
+                 args: ModelConfig,
+                 **kwargs
+                 ):
         super().__init__()
         self.text_encoder = TextEncoder(n_vocab, args)
+        self.audio_posterior_encoder = PosteriorEncoder(
+            spec_channels,
+            args.inter_channels,
+            args.hidden_channels,
+            args.n_layers_q
+        )
 
     def forward(self, x: Tensor, x_lengths: Tensor, y: Tensor, y_lengths: Tensor):
-        x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths)
+        # x, m_p, logs_p, x_mask = self.text_encoder(x, x_lengths)
+        result = self.audio_posterior_encoder(y, y_lengths)
 
 
 class MultiPeriodDiscriminator(nn.Module):
