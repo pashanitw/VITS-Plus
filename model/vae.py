@@ -1,9 +1,12 @@
 import torch
 from torch import nn, Tensor
+
+from model.model import ModelConfig
 from utils import sequence_mask
 from typing import Tuple
 from torch.nn import Conv1d
-from torch.nn.utils import weight_norm
+from torch.nn.utils import weight_norm, remove_weight_norm
+import torch.nn.functional as F
 
 
 @torch.jit.script
@@ -29,9 +32,8 @@ class WavenetEncoder(nn.Module):
         self.hidden_channels = hidden_channels
         self.drop = nn.Dropout(p_dropout)
 
-
         for i in range(n_layers):
-            dilation = dilation_rate**i
+            dilation = dilation_rate ** i
             self.downs.append(
                 nn.ModuleList(
                     [
@@ -40,7 +42,7 @@ class WavenetEncoder(nn.Module):
                                 hidden_channels,
                                 hidden_channels * 2,
                                 kernel_size,
-                                dilation= dilation,
+                                dilation=dilation,
                                 padding=get_padding(kernel_size, dilation=dilation)
                             )
                         )
@@ -92,8 +94,6 @@ class WavenetEncoder(nn.Module):
         return output * y_mask
 
 
-
-
 class PosteriorEncoder(nn.Module):
     def __init__(
             self,
@@ -105,7 +105,6 @@ class PosteriorEncoder(nn.Module):
             dilation_rate: int = 1,
             gin_channels: int = 0,
     ):
-
         """Posterior Encoder of VITS model.
 
                 ::
@@ -128,7 +127,7 @@ class PosteriorEncoder(nn.Module):
         self.encoder = WavenetEncoder(hidden_channels, kernel_size, dilation_rate, n_layers, gin_channels)
         self.proj = nn.Conv1d(hidden_channels, out_channels * 2, kernel_size=1)
 
-    def forward(self, y: torch.Tensor, y_lengths:torch.Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    def forward(self, y: torch.Tensor, y_lengths: torch.Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
               Shapes:
                   - x: :math:`[B, C, T]`
@@ -148,14 +147,175 @@ class PosteriorEncoder(nn.Module):
 
         z = m + torch.randn_like(m) * torch.exp(logs) * y_mask
 
-        return z, m , logs, y_mask
+        return z, m, logs, y_mask
 
 
 
+def init_weights(m, mean=0.0, std=0.01):
+    classname = m.__class__.__name__
+    if classname.find("Conv") != -1:
+        m.weight.data.normal_(mean, std)
+
+
+LRELU_SLOPE = 0.1
+
+
+
+
+class ResBlock1(nn.Module):
+    def __init__(self, channels, kernel_size, dilation):
+        super().__init__()
+        self.convs_1 = nn.ModuleList(
+            [
+                weight_norm(
+                    nn.Conv1d(channels, channels, kernel_size=kernel_size, stride=1, dilation=dilation[i],
+                              padding=get_padding(kernel_size, dilation=dilation[i]))
+                ) for i in range(len(dilation))
+            ]
+        )
+
+        self.convs_1.apply(init_weights)
+
+        self.convs_2 = nn.ModuleList(
+            [
+                weight_norm(
+                    nn.Conv1d(channels, channels, kernel_size=kernel_size, stride=1, dilation=1,
+                              padding=get_padding(kernel_size, dilation=1))
+                ) for i in range(len(dilation))
+            ]
+        )
+
+        self.convs_2.apply(init_weights)
+
+    def forward(self, y: Tensor, y_mask=None) -> Tensor:
+        for c1, c2 in zip(self.convs_1, self.convs_2):
+            yt = F.leaky_relu(y, LRELU_SLOPE)
+
+            if y_mask is not None:
+                yt = yt * y_mask
+
+            yt = c1(yt)
+            yt = F.leaky_relu(yt, LRELU_SLOPE)
+
+            if y_mask is not None:
+                yt = yt * y_mask
+
+            yt = c2(yt)
+
+            y = yt + y
+
+        if y_mask is not None:
+            y = y * y_mask
+
+        return y
+
+    def remove_weight_norm(self):
+        for l in self.convs_1:
+            remove_weight_norm(l)
+
+        for l in self.convs_2:
+            remove_weight_norm(l)
+
+
+class ResBlock2(nn.Module):
+    def __init__(self, channels: int, kernel_size: int, dilation: Tuple):
+        super().__init__()
+        self.convs = nn.ModuleList(
+            [
+                weight_norm(
+                    nn.Conv1d(channels, channels, kernel_size=kernel_size, stride=1, dilation=dilation[i],
+                              padding=get_padding(kernel_size, dilation=dilation[i]))
+                ) for i in range(len(dilation))
+            ]
+        )
+
+        self.convs.apply(init_weights)
+
+    def forward(self, y: Tensor, y_mask=None) -> Tensor:
+        for c in self.convs:
+            yt = F.leaky_relu(y, LRELU_SLOPE)
+            if y_mask is not None:
+                yt = yt * y_mask
+            yt = c(yt)
+            y = y + yt
+
+            if y_mask is not None:
+                y = y * y_mask
+            return y
+
+    def remove_weight_norm(self):
+        for l in self.convs:
+            remove_weight_norm(l)
 
 
 class Decoder(nn.Module):
-    def __init__(
-            self,
-    ):
-        pass
+    def __init__(self, args: ModelConfig):
+        super().__init__()
+
+        self.num_kernels = len(args.resblock_kernel_sizes)
+        self.num_upsamples = len(args.upsample_rates)
+        self.conv_pre = nn.Conv1d(args.inter_channels, args.upsample_initial_channel, kernel_size=7, stride=1,
+                                  padding=3)
+
+        resblock = ResBlock1 if args.resblock == "1" else ResBlock2
+
+        self.ups = nn.ModuleList()
+
+        for i, (u, k) in enumerate(zip(args.upsample_rates, args.upsample_kernel_sizes)):
+
+            self.ups.append(
+                weight_norm(
+                    nn.ConvTranspose1d(
+                        args.upsample_initial_channel //  (2 ** i),
+                        args.upsample_initial_channel // (2 ** (i + 1)),
+                        kernel_size=k,
+                        stride=u,
+                        padding = (k - u) // 2
+                    )
+                )
+            )
+
+        self.resblocks = nn.ModuleList()
+
+        for i in range(len(self.ups)):
+            ch = args.upsample_initial_channel // (2 ** (i + 1))
+            self.resblocks.append(
+                nn.ModuleList(
+                    [
+                        resblock(
+                            ch,
+                            kernel_size=k,
+                            dilation=d
+                        )
+                        for j, (k, d) in enumerate(zip(args.resblock_kernel_sizes, args.resblock_dilation_sizes))
+                    ]
+                )
+            )
+
+        self.conv_post = nn.Conv1d(ch, 1, kernel_size=7, stride=1, padding=3, bias=False)
+
+        self.ups.apply(init_weights)
+
+    def forward(self, y: Tensor) -> Tensor:
+        y = self.conv_pre(y)
+
+        for i in range(len(self.ups)):
+            y = F.leaky_relu(y, LRELU_SLOPE)
+            y = self.ups[i](y)
+
+            ys = None
+
+            for block in self.resblocks[i]:
+                if ys is None:
+                    ys = block(y)
+                else:
+                    ys = ys + block(y)
+
+            y = ys / self.num_kernels
+
+        y = F.leaky_relu(y)
+        y = self.conv_post(y)
+        y = torch.tanh(y)
+
+        return y
+
