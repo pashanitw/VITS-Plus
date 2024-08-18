@@ -1,7 +1,6 @@
 import torch
 from torch import nn, Tensor
 from utils import sequence_mask
-from einops import rearrange
 from typing import Tuple
 from torch.nn import Conv1d
 from torch.nn.utils import weight_norm
@@ -16,8 +15,10 @@ def fused_add_tanh_sigmoid_multiply(input_a, input_b, n_channels):
     acts = t_act * s_act
     return acts
 
+
 def get_padding(kernel_size, dilation):
     return int((kernel_size * dilation - dilation) / 2)
+
 
 class WavenetEncoder(nn.Module):
     def __init__(self, hidden_channels, kernel_size, dilation_rate, n_layers, gin_channels=0, p_dropout=0):
@@ -54,9 +55,10 @@ class WavenetEncoder(nn.Module):
                 nn.ModuleList(
                     [
                         weight_norm(
-                            nn.Linear(
+                            nn.Conv1d(
                                 hidden_channels,
-                                hidden_channels * 2 if i < n_layers - 1 else hidden_channels
+                                hidden_channels * 2 if i < n_layers - 1 else hidden_channels,
+                                kernel_size=1
                             )
                         )
                     ]
@@ -78,8 +80,7 @@ class WavenetEncoder(nn.Module):
 
                 acts = self.drop(acts)
 
-                res_skip_acts = self.resblocks[i][i_down](rearrange(acts, 'b c t -> b t c'))
-                res_skip_acts = rearrange(res_skip_acts, 'b t c -> b c t')
+                res_skip_acts = self.resblocks[i][i_down](acts)
 
                 if i < self.n_layers - 1:
                     res_acts = res_skip_acts[:, :self.hidden_channels, :]
@@ -89,8 +90,6 @@ class WavenetEncoder(nn.Module):
                     output = output + res_skip_acts
 
         return output * y_mask
-
-
 
 
 
@@ -125,9 +124,9 @@ class PosteriorEncoder(nn.Module):
         super().__init__()
         self.out_channels = out_channels
 
-        self.pre = nn.Linear(in_channels, hidden_channels)
+        self.pre = nn.Conv1d(in_channels, hidden_channels, kernel_size=1)
         self.encoder = WavenetEncoder(hidden_channels, kernel_size, dilation_rate, n_layers, gin_channels)
-        self.proj = nn.Linear(hidden_channels, out_channels * 2)
+        self.proj = nn.Conv1d(hidden_channels, out_channels * 2, kernel_size=1)
 
     def forward(self, y: torch.Tensor, y_lengths:torch.Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
         """
@@ -138,15 +137,13 @@ class PosteriorEncoder(nn.Module):
               """
         y_mask = sequence_mask(y_lengths)[:, None, :].to(y.dtype)
 
-        y = self.pre(rearrange(y, 'b c t -> b t c'))
-        y = rearrange(y, 'b t c -> b c t') * y_mask
-
+        y = self.pre(y) * y_mask
         # encode the input
         y = self.encoder(y, y_mask)
 
         # project encoded features
-        stats = self.proj(rearrange(y, 'b c t -> b t c'))
-        stats = rearrange(stats, 'b t c -> b c t') * y_mask
+        stats = self.proj(y) * y_mask
+
         m, logs = torch.chunk(stats, 2, dim=1)
 
         z = m + torch.randn_like(m) * torch.exp(logs) * y_mask
